@@ -7,9 +7,26 @@ import time
 
 # Cấu hình mạng
 SERVER_HOST = "127.0.0.1"
-SERVER_PORT = 65432
-CHUNK_SIZE = 1024 # 1KB
+SERVER_PORT = None
+CHUNK_SIZE = 1024 * 1024
+DOWNLOAD_DIR = "downloads"
+CHUNK_STORAGE = "bin"
 char_encoding = "utf-8"  # Bộ mã hóa ký tự
+dot_progress = 0
+
+def get_server_port():
+    """
+    Nhập cổng server từ người dùng.
+    """
+    while True:
+        try:
+            port = int(input("Nhập cổng server: "))
+            if 1024 <= port <= 65535:
+                return port
+            else:
+                print("Cổng phải nằm trong khoảng từ 1024 đến 65535.")
+        except ValueError:
+            print("Cổng không hợp lệ.")
 
 def convert_size(size_bytes):
     """
@@ -73,12 +90,18 @@ class Client:
         for filename, size in self.server_files.items():
             size_readable = convert_size(size)
             print(f"{filename}: {size_readable}")
+        print(f"{'-' * 30}\n\n")
     
     def monitor_input(self):
         """
         Theo dõi file input.txt để tải file mới.
         """
-        print("\nMonitoring input.txt for download requests...")
+        global dot_progress
+        dot_progress += 1 if dot_progress < 3 else -3
+
+        print('\n\033[3F', end='')
+        print("\033[KMonitoring input.txt for download requests" + '.' * dot_progress)
+
         try:
             if not os.path.exists('input.txt'):
                 print("ERROR: File 'input.txt' not found!")
@@ -114,7 +137,7 @@ class Client:
             if chunk_id == 0 and progress_percent == 0:
                 print('\n' * 4)
             else:
-                print('\033[4F', end='') 
+                print('\033[4F', end='')
                 
           # In tiến trình tải file
             for i in range(4):
@@ -135,7 +158,7 @@ class Client:
             chunk_socket.connect((SERVER_HOST, SERVER_PORT))
             
             # Bỏ qua danh sách file ban đầu
-            chunk_socket.recv(1024).decode(char_encoding)
+            chunk_socket.recv(4096).decode(char_encoding)
 
             # Gửi yêu cầu tải file đến server
             chunk_socket.sendall(f"{filename}|{offset}|{chunk_size}".encode(char_encoding))
@@ -149,17 +172,13 @@ class Client:
                 if not packet:
                     raise ConnectionError("Connection lost")
                 
-                # Kiểm tra xem có nhận đủ dữ liệu không
-                if len(packet) < min(remaining, CHUNK_SIZE):
-                    raise ValueError(f"Received less data than expected: {len(packet)} bytes")
-
                 # Thêm dữ liệu vào buffer
                 chunk_buffer += packet
                 total_received += len(packet)
                 self.print_progress(filename, part_number, ((total_received / chunk_size) * 100))
 
             # Sau khi nhận đủ chunk_size, ghi dữ liệu vào file
-            part_filename = os.path.join("bin", f"{filename}.chunk{part_number}")
+            part_filename = os.path.join(CHUNK_STORAGE, f"{filename}.chunk{part_number}")
             os.makedirs(os.path.dirname(part_filename), exist_ok=True)
             with open(part_filename, "wb") as part_file:
                 part_file.write(chunk_buffer)
@@ -174,10 +193,10 @@ class Client:
         """
         Gộp các chunk thành file hoàn chỉnh.
         """
-        final_filename = os.path.join("downloads", filename)
+        final_filename = os.path.join(DOWNLOAD_DIR, filename)
         with open(final_filename, "wb") as final_file:
             for part_number in range(4):
-                part_filename = os.path.join("bin", f"{filename}.chunk{part_number}")
+                part_filename = os.path.join(CHUNK_STORAGE, f"{filename}.chunk{part_number}")
                 with open(part_filename, "rb") as part_file:
                     final_file.write(part_file.read())
                 os.remove(part_filename)
@@ -248,5 +267,6 @@ class Client:
         print("Client is shut down...")
 
 if __name__ == "__main__":
+    SERVER_PORT = get_server_port()
     client = Client()
     client.start() 

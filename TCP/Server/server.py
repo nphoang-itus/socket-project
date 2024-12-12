@@ -8,7 +8,7 @@ import time
 # Cấu hình mạng
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 65432
-CHUNK_SIZE = 1024 # 1KB
+CHUNK_SIZE = 1024 * 1024 # 1MB
 directory = "files"  # Thư mục chứa file
 char_encoding = "utf-8"  # Bộ mã hóa ký tự
 

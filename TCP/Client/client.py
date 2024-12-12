@@ -4,15 +4,30 @@ import os
 import json
 import signal
 import time
+import ipaddress
 
 # Cấu hình mạng
-SERVER_HOST = "127.0.0.1"
+SERVER_HOST = None
 SERVER_PORT = None
 CHUNK_SIZE = 1024 * 1024
 DOWNLOAD_DIR = "downloads"
 CHUNK_STORAGE = "bin"
 char_encoding = "utf-8"  # Bộ mã hóa ký tự
 dot_progress = 0
+
+def get_server_ip():
+    """
+    Nhập IP server từ người dùng.
+    """
+    while True:
+        try:
+            ip = input("Nhập IP server: ")
+            if ipaddress.ip_address(ip):
+                return ip
+            else:
+                print("IP không hợp lệ.")
+        except ValueError:
+            print("IP không hợp lệ.")
 
 def get_server_port():
     """
@@ -68,6 +83,7 @@ class Client:
         """
         Kết nối đến server.
         """
+        global SERVER_HOST, SERVER_PORT
         try:
             if not self.client_socket:
                 self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -81,6 +97,11 @@ class Client:
             return True
         except Exception as e:
             print(f"Error connecting to server: {e}")
+            if self.client_socket:
+                self.client_socket.close()
+                self.client_socket = None
+            SERVER_HOST = get_server_ip()
+            SERVER_PORT = get_server_port()
             return False
         except:
             return False
@@ -249,7 +270,7 @@ class Client:
         while self.is_running:
             try:
                 if not self.connect_to_server():
-                    print("Trying to reconnect in 5 seconds...")
+                    print("Trying to reconnect in 5 seconds...\n")
                     time.sleep(5)
                     continue
                 
@@ -267,6 +288,7 @@ class Client:
         print("Client is shut down...")
 
 if __name__ == "__main__":
+    SERVER_HOST = get_server_ip()
     SERVER_PORT = get_server_port()
     client = Client()
     client.start() 

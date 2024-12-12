@@ -6,11 +6,34 @@ import signal
 import time
 
 # Cấu hình mạng
-SERVER_HOST = "127.0.0.1"
+SERVER_HOST = None
 SERVER_PORT = 65432
 CHUNK_SIZE = 1024 * 1024 # 1MB
 directory = "files"  # Thư mục chứa file
 char_encoding = "utf-8"  # Bộ mã hóa ký tự
+
+def choice_type_ip_server():
+    """
+    Chọn loại IP server sẽ sử dụng.
+    """
+    global SERVER_HOST
+    print("Chọn loại IP server sẽ sử dụng:")
+    print("1. IP local (Server và Client chung 1 thiet bị)")
+    print("2. IP public (Server và Client khác thiet bị và chung mạng)")
+    choice = input("Chọn: ")
+    try:
+        print('\33[2F')
+        while choice not in ["1", "2"]:
+            print("\33[KLựa chọn không hợp lệ.")
+            choice = input("Chọn: ")
+            print('\33[3F')
+        
+        if choice == "1":
+            SERVER_HOST = '127.0.0.1'
+        else:
+            SERVER_HOST = socket.gethostbyname(socket.gethostname())
+    except KeyboardInterrupt:
+        exit(0)
 
 def scan_files_for_server():
     """
@@ -133,11 +156,9 @@ class Server:
             self.server_socket = server
             server.bind((SERVER_HOST, SERVER_PORT))
             server.listen()
-            print(f"Server is listening on {SERVER_HOST}:{SERVER_PORT}")
+            print(f"Server is listening on IP: {SERVER_HOST} | PORT: {SERVER_PORT}")
 
             while self.is_running:
-                loads = 1
-                loads += 1
                 try:
                     client_connect, client_address = server.accept()
                     
@@ -154,5 +175,6 @@ class Server:
 
 
 if __name__ == '__main__':
+    choice_type_ip_server() # Chọn loại IP server sẽ sử dung
     server = Server()
     server.start() # Khởi động server

@@ -1,2 +1,2 @@
-File1GB.bin
-File2.zi
+File1GB.bi
+File2.zip

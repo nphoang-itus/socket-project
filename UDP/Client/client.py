@@ -34,6 +34,7 @@ class Client:
         self.progress = {}
         self.client_socket = None
         self.print_lock = threading.Lock()
+        self.enough_threads = False
         signal.signal(signal.SIGINT, self.handle_shutdown)
     
     def handle_shutdown(self, signum, frame):
@@ -147,55 +148,67 @@ class Client:
                 bar = '█' * filled_length + ' ' * (bar_length - filled_length)
                 print(f"\033[K{file_name} - Chunk {i+1} {bar} {progress_display:.0f}%")
 
-    def download_chunk(self, file_name, offset_chunk, size_chunk, part_number):
+    def download_chunk(self, file_name, offset_part, size_part, part_number):
         chunk_socket = None
         received_packets = set()
 
         try:
             chunk_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            chunk_socket.settimeout(5)  # Giảm timeout xuống hợp lý hơn
-            request = f"GET_CHUNK|{file_name}|{offset_chunk}|{size_chunk}|{part_number}".encode(CHAR_ENCODING)
-            
-            chunk_socket.sendto(request, self.server_addr)
             logging.info(f"[download_chunk] Sent GET_CHUNK request for {file_name}, part {part_number}")
+            request = f"GET_CHUNK|{file_name}|{offset_part}|{size_part}|{part_number}".encode(CHAR_ENCODING)
+            chunk_socket.sendto(request, self.server_addr)
 
             seq_check = 0
             total_received = b""
-            while len(total_received) < size_chunk and self.is_running:
+            
+            while len(total_received) < size_part and self.is_running:
+                if not self.enough_threads:
+                    continue
+
                 try:
-                    data_recv, _ = chunk_socket.recvfrom(MAX_BYTES_RECV)
+                    chunk_socket.settimeout(5)
+                    remaining = size_part - len(total_received)
+                    data_recv, chunk_server = chunk_socket.recvfrom(min(remaining, BUFFER) + 9)
                     part_recv, seq_recv, checksum, buffer_chunk = struct.unpack(
                         f"!I I B {len(data_recv) - 9}s", data_recv
                     )
+
                     computed_checksum = sum(buffer_chunk) % 256
                     packet_id = (part_recv, seq_recv)
 
                     if packet_id in received_packets:
                         logging.info(f"[download_chunk] Duplicate packet {packet_id} received, discarding.")
                         continue
-
-                    if part_recv == part_number and seq_recv == seq_check and checksum == computed_checksum:
+                    
+                    if seq_recv == seq_check and checksum == computed_checksum:
                         logging.info(f"[download_chunk] Valid packet {packet_id} received.")
                         ack_message = f"ACK-{part_number}_{seq_check}".encode(CHAR_ENCODING)
-                        chunk_socket.sendto(ack_message, self.server_addr)
+                        chunk_socket.sendto(ack_message, chunk_server)
                         total_received += buffer_chunk
                         seq_check += 1
-                        self.print_progress(file_name, part_number, (len(total_received) / size_chunk) * 100)
+                        self.print_progress(file_name, part_number, (len(total_received) / size_part) * 100)
                         received_packets.add(packet_id)
+                        part_file = os.path.join(DIR_DOWNLOADED, f"{file_name}.part{part_number}")
+                        os.makedirs(os.path.dirname(part_file), exist_ok=True)
+                        with open(part_file, "wb") as part_file:
+                            part_file.write(total_received)
+                            part_file.flush()
+                            os.fsync(part_file.fileno())
                     else:
                         logging.warning(f"[download_chunk] Packet {packet_id} invalid, sending NAK.")
                         nak_message = f"NAK-{part_number}_{seq_check}".encode(CHAR_ENCODING)
-                        chunk_socket.sendto(nak_message, self.server_addr)
+                        chunk_socket.sendto(nak_message, chunk_server)
+                        continue
                 except socket.timeout:
-                    logging.warning(f"[download_chunk] Timeout for packet {seq_check}, retrying.")
+                    logging.warning(f"[download_chunk] Timeout for packet {part_number}_{seq_check}, retrying.")
                     nak_message = f"NAK-{part_number}_{seq_check}".encode(CHAR_ENCODING)
-                    chunk_socket.sendto(nak_message, self.server_addr)
+                    chunk_socket.sendto(nak_message, chunk_server)
+                    continue
         except Exception as e:
             logging.error(f"[download_chunk] Error: {e}")
         finally:
             if chunk_socket:
                 chunk_socket.close()
-
 
     def merge_chunk(self, file_name):
         with open(os.path.join(DIR_DOWNLOADED, file_name), "wb") as outFile:
@@ -227,12 +240,15 @@ class Client:
 
             threads = []
             for i in range(4):
-                offset_chunk = i * chunk_size
-                part_size = chunk_size if i < 3 else file_size - offset_chunk
-                thread = threading.Thread(target=self.download_chunk, args=(file_name, offset_chunk, part_size, i))
+                offset_part = i * chunk_size
+                part_size = chunk_size if i < 3 else file_size - offset_part
+                thread = threading.Thread(target=self.download_chunk, args=(file_name, offset_part, part_size, i))
                 thread.daemon = True
                 thread.start()
                 threads.append(thread)
+
+                if i == 3:
+                    self.enough_threads = True
             
             for thread in threads:
                 thread.join()

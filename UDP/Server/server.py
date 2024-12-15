@@ -11,7 +11,7 @@ import threading
 HOST = "0.0.0.0"
 PORT = 6264
 MAX_BYTES_RECV = 4096
-BUFFER = 1024
+BUFFER_SIZE = 1024
 CHAR_ENCODING = "utf_8"
 DATA_TXT = "data.txt"
 FILE_DIR = "Files_onServer"
@@ -27,9 +27,8 @@ class Server:
     def __init__(self):
         self.file_data = self.scan_files_on_server()
         self.is_running = True
-        self.clients_addr = set()
         self.server_socket = None
-
+        self.enough_threads = False
         signal.signal(signal.SIGINT, self.handle_shutdown) # Xử lý tắt server khi nhận tín hiệu SIGINT
 
     def format_size(self, size_bytes):
@@ -72,13 +71,6 @@ class Server:
         print("Server is shutting down...")
         self.is_running = False
 
-        for client in self.clients_addr.copy():
-            try:
-                client.close()
-            except Exception as e:
-                logging.error(f"[handle_shutdown] Error closing client connection: {e}")
-                pass
-
         if self.server_socket:
             try:
                 self.server_socket.close()
@@ -92,7 +84,7 @@ class Server:
             message = "ERROR: No files available to the client!"
             self.server_socket.sendto(message.encode("utf_8"), client_addr)
             logging.info(f"Sent empty file list to {client_addr}")
-            
+
             # Nếu ko có file trên server thì đóng server và chương trình để thêm file
             self.server_socket.close()
             self.server_socket = None
@@ -102,33 +94,37 @@ class Server:
         self.server_socket.sendto(json_data, client_addr)
         logging.info(f"[send_file_list] Sent file list to {client_addr}")
 
-    def send_chunk(self, client_addr, file_name, offset_chunk, size_chunk, part_number):
+    def send_chunk(self, part_addr, file_name, offset_part, size_part, part_number):
         try:
+            chunk_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             path_file = os.path.join(FILE_DIR, file_name)
             with open(path_file, "rb") as inFile:
-                inFile.seek(offset_chunk)
-
+                inFile.seek(offset_part)
                 seq_send = 0
                 total_send = b""
-                while len(total_send) < size_chunk:
-                    remaining = size_chunk - len(total_send)
-                    size_data_send = min(remaining, BUFFER)
+
+                while len(total_send) < size_part:
+                    if not self.enough_threads:
+                        continue
+
+                    remaining = size_part - len(total_send)
+                    size_data_send = min(remaining, BUFFER_SIZE)
                     data = inFile.read(size_data_send)
                     
                     checksum = sum(data) % 256
                     packet_format = f"!I I B {len(data)}s"
                     packet = struct.pack(packet_format, part_number, seq_send, checksum, data)
 
-                    self.server_socket.sendto(packet, client_addr)
-                    logging.info(f"[send_chunk] Sent {len(packet)} bytes for chunk {part_number}_{seq_send} to {client_addr}")
+                    chunk_socket.sendto(packet, part_addr)
+                    logging.info(f"[send_chunk] Sent {len(packet)} bytes for chunk {part_number}_{seq_send} to {part_addr}")
 
                     try:
-                        self.server_socket.settimeout(7)  # Timeout chờ ACK/NAK
-                        checking_data, addr = self.server_socket.recvfrom(13)
+                        chunk_socket.settimeout(10)  # Timeout chờ ACK/NAK
+                        checking_data, _ = chunk_socket.recvfrom(MAX_BYTES_RECV)
                         message = checking_data.decode(CHAR_ENCODING)
 
                         if message == f"ACK-{part_number}_{seq_send}":
-                            logging.info(f"Received ACK for chunk {part_number}_{seq_send} from {client_addr}")
+                            logging.info(f"Received ACK for chunk {part_number}_{seq_send} from {part_addr}")
                             total_send += data
                             seq_send += 1
                         elif message == f"NAK-{part_number}_{seq_send}":
@@ -136,11 +132,14 @@ class Server:
                             continue
                     except socket.timeout:
                         logging.warning(f"[send_chunk] Timeout for chunk {part_number}_{seq_send}, retrying...")
-                        self.server_socket.sendto(packet, client_addr)  # Gửi lại chunk nếu timeout
                         continue
+                    except Exception as e:
+                        print(f"ERROR: {e}")
         except Exception as e:
             logging.error(f"[send_chunk] Error: {e}")
-
+        finally:
+            if chunk_socket:
+                chunk_socket.close()
 
     def start_server(self):
         logging.info("[start_server] Server started and waiting for client requests.")
@@ -148,29 +147,34 @@ class Server:
 
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.server_socket.bind((HOST, PORT))
-        self.server_socket.settimeout(30)
         logging.info(f"[start_server] Server initialized on {HOST}:{PORT}")
         print(f"Server initialized on {HOST}:{PORT}")
 
+        data, addr = self.server_socket.recvfrom(MAX_BYTES_RECV)
+        message = data.decode("utf-8")
+        logging.info(f"Received GET_FILE_LIST from {addr}: {message}")
+        self.send_file_list(addr)
         while self.is_running:
             try:
-                data, addr = self.server_socket.recvfrom(MAX_BYTES_RECV)
-                message = data.decode("utf-8")
-                logging.info(f"Received message from {addr}: {message}")
-
                 if message == "GET_FILE_LIST":
-                    self.send_file_list(addr)
-                elif message.startswith("GET_CHUNK"):
-                    parts = message.strip().split('|')
-                    _, file_name, offset_chunk, size_chunk, part_number = parts
-                    offset_chunk = int(offset_chunk)
-                    size_chunk = int(size_chunk)
-                    part_number = int(part_number)
+                    for i in range(4):
+                        part_data, part_addr = self.server_socket.recvfrom(MAX_BYTES_RECV)
+                        message_part = part_data.decode(CHAR_ENCODING)
+                        logging.info(f"Received GET_CHUNK {part_addr}: {message_part}")
+                        if (message_part.startswith("GET_CHUNK")):
+                            parts = message_part.strip().split('|')
+                            _, file_name, offset_part, size_part, part_number = parts
+                            offset_part = int(offset_part)
+                            size_part = int(size_part)
+                            part_number = int(part_number)
 
-                    if self.is_running:
-                        logging.info(f"Processing GET_CHUNK for {file_name}, chunk {part_number}, offset {offset_chunk}, size {size_chunk}")
-                        client_thread = threading.Thread(target=self.send_chunk, args=(addr, file_name, offset_chunk, size_chunk, part_number), daemon=True)
-                        client_thread.start()
+                            if self.is_running:
+                                logging.info(f"Processing GET_CHUNK for {file_name}, chunk {part_number}, offset {offset_part}, size {size_part}")
+                                client_thread = threading.Thread(target=self.send_chunk, args=(part_addr, file_name, offset_part, size_part, part_number), daemon=True)
+                                client_thread.start()
+                        
+                        if i == 3:
+                            self.enough_threads = True
             except KeyboardInterrupt:
                 self.handle_shutdown(signal.SIGINT, None)
                 break

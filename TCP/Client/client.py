@@ -9,6 +9,7 @@ import sys
 import tkinter as tk
 from tkinter import messagebox
 from tkinter import ttk
+import struct
 
 # Cấu hình mạng
 SERVER_HOST = None
@@ -118,11 +119,19 @@ class Client:
             if not self.client_socket:
                 self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 self.client_socket.connect((SERVER_HOST, SERVER_PORT))
-                self.client_socket.settimeout(1)
+                self.client_socket.settimeout(5)
                 print("Connected to server.")
 
                 # Nhận danh sách file từ server
-                self.server_files = json.loads(self.client_socket.recv(4096).decode(char_encoding))
+                header = self.client_socket.recv(4)
+                if not header:
+                    return False
+                    
+                # Giải mã độ dài từ header
+                data_length = struct.unpack(">I", header)[0]
+                
+                # Nhận toàn bộ dữ liệu dựa trên độ dài đã giải mã
+                self.server_files = json.loads(self.client_socket.recv(data_length).decode(char_encoding))
                 self.print_available_files()
                 self.start_file_selector_thread()
             
@@ -222,11 +231,21 @@ class Client:
         while retry_count < 3:
             try:
                 part_file_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                part_file_socket.settimeout(20)
                 part_file_socket.connect((SERVER_HOST, SERVER_PORT))
+                part_file_socket.settimeout(5)
                 
                 # Bỏ qua danh sách file ban đầu
-                part_file_socket.recv(4096).decode(char_encoding)
+                header = part_file_socket.recv(4)
+
+                if not header:
+                    print("Connection lost")
+                    continue
+                    
+                # Giải mã độ dài từ header
+                data_length = struct.unpack(">I", header)[0]
+                
+                # Bỏ qua dữ liệu từ server
+                part_file_socket.recv(data_length).decode(char_encoding)
 
                 # Gửi yêu cầu tải file đến server
                 part_file_socket.sendall(f"{filename}|{offset}|{part_size}".encode(char_encoding))
@@ -390,7 +409,7 @@ class Client:
                 if self.is_connected:
                     try:
                         response = self.client_socket.recv(1024).decode(char_encoding)
-                        self.client_socket.settimeout(2)
+                        self.client_socket.settimeout(5)
                         if "SERVER SHUTDOWN" in response:
                             print("Server has shut down. Disconnecting...")
                             self.is_connected = False

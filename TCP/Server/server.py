@@ -6,6 +6,7 @@ import signal
 import sys
 import logging
 import datetime
+import struct
 
 LOG_DIR = 'logs'
 if not os.path.exists(LOG_DIR):
@@ -138,7 +139,12 @@ class Server:
         try:
             # Gửi thông tin file trên server đến client
             json_data = json.dumps(self.file_datas).encode(char_encoding)
-            client_connect.sendall(json_data)
+            
+            # Định dạng độ dài (4 bytes unsigned int)
+            header = struct.pack(">I", len(json_data))
+
+            # Gửi header trước, sau đó là payload
+            client_connect.sendall(header + json_data)
 
             while self.is_running:
                 # Nhận yêu cầu tải file từ client (format: filename|offset|size)

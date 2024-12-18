@@ -1,233 +1,254 @@
 import socket
-import threading
+import time
 import os
-import json
-import signal
-import sys
 import logging
-import datetime
+import signal
+import json
+import sys
 import struct
+import threading
 
-LOG_DIRECTORY = 'logs'
-if not os.path.exists(LOG_DIRECTORY):
-    os.makedirs(LOG_DIRECTORY)
+SERVER_HOST = "0.0.0.0"
+SERVER_PORT = 6264
+MAX_RECEIVE_BYTES = 4096
+CHUNK_BUFFER_SIZE = 8192
+CHARACTER_ENCODING = "utf_8"
+METADATA_FILE = "data.txt"
+SERVER_FILE_DIRECTORY = "server_files"
 
-log_file = os.path.join(LOG_DIRECTORY, f'server_{datetime.datetime.now().strftime('%d-%m-%Y_%Hh%Mm%Ss')}.log')
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_file),
-        logging.StreamHandler()
-    ]
+    filename = "server.log",
+    level = logging.INFO,
+    format = "%(asctime)s || %(levelname)s || %(message)s",
+    filemode = 'w'
 )
 
-# Cấu hình mạng
-SERVER_HOST = '0.0.0.0'
-SERVER_PORT = 6264
-SERVER_FILES_DIRECTORY = "server_files"  # Thư mục chứa file
-CHAR_ENCODING = "utf-8"  # Bộ mã hóa ký tự
-
-def scan_available_files():
-    """
-    Quét tất cả các file trong thư mục hiện tại, tính kích thước,
-    lưu vào `data.txt` và trả về thông tin file dưới dạng dictionary.
-    """
-    if not os.path.exists(SERVER_FILES_DIRECTORY):
-        logging.error(f"Error: Directory '{SERVER_FILES_DIRECTORY}' does not exist.")
-        print(f"Error: Directory '{SERVER_FILES_DIRECTORY}' does not exist.")
-        sys.exit(1)  # Exit the program if the directory does not exist
-    
-    if not os.access(SERVER_FILES_DIRECTORY, os.R_OK):
-        logging.error(f"Error: Directory '{SERVER_FILES_DIRECTORY}' is not accessible.")
-        print(f"Error: Directory '{SERVER_FILES_DIRECTORY}' is not accessible.")
-        sys.exit(1)  # Exit the program if the directory is not accessible
-    
-    file_data = {}
-    with open("data.txt", "w") as data_file:
-        for filename in os.listdir(SERVER_FILES_DIRECTORY):
-            file_path = os.path.join(SERVER_FILES_DIRECTORY, filename)
-            if os.path.isfile(file_path):
-                size_bytes = os.path.getsize(file_path)
-                size_readable = convert_size(size_bytes)
-                file_data[filename] = size_bytes    
-                data_file.write(f"{filename} {size_readable}\n")
-    return file_data
-
-def convert_size(size_bytes):
-    """
-    Chuyển đổi kích thước file từ bytes sang KB, MB, hoặc GB phù hợp.
-    """
-    if size_bytes >= 1024 ** 4:
-        return f"{size_bytes / (1024 ** 4):.2f}TB"
-    elif size_bytes >= 1024 ** 3:
-        return f"{size_bytes / (1024 ** 3):.2f}GB"
-    elif size_bytes >= 1024 ** 2:
-        return f"{size_bytes / (1024 ** 2):.2f}MB"
-    elif size_bytes >= 1024:
-        return f"{size_bytes / 1024:.2f}KB"
-    else:
-        return f"{size_bytes}B"
-
 class Server:
-    """
-    Server xử lý đa luồng cho phép client tải file theo từng chunk.
-    """
     def __init__(self):
-        self.file_data = scan_available_files()    # Lưu thông tin file trên server
-        self.is_running = True   # Biến kiểm tra server đang hoạt động hay không
-        self.clients = set()  # Lưu thông tin client kết nối đến server
-        self.server_socket = None  # Socket server
-        self.client_threads = []    # Luồng xử lý client
-        signal.signal(signal.SIGINT, self.handle_shutdown) # Xử lý tắt server khi nhận tín hiệu SIGINT
-    
-    def handle_shutdown(self, signum, frame):
+        self.available_files = self.scan_available_files()
+        self.is_running = True
+        self.server_socket = None
+        self.client_threads = []
+        signal.signal(signal.SIGINT, self.shutdown_server) # Xử lý tắt server khi nhận tín hiệu SIGINT
+
+    def format_file_size(self, size_bytes):
         """
-        Xử lý tắt server khi nhận tín hiệu SIGINT - Ctrl + C.
+        Chuyển đổi kích thước file từ bytes sang KB, MB, hoặc GB phù hợp.
         """
+
+        if size_bytes >= 1024 ** 4:
+            return f"{size_bytes / (1024 ** 4):.2f}TB"
+        elif size_bytes >= 1024 ** 3:
+            return f"{size_bytes / (1024 ** 3):.2f}GB"
+        elif size_bytes >= 1024 ** 2:
+            return f"{size_bytes / (1024 ** 2):.2f}MB"
+        elif size_bytes >= 1024:
+            return f"{size_bytes / 1024:.2f}KB"
+        else:
+            return f"{size_bytes}B"
+
+    def scan_available_files(self):
         try:
-            logging.info("Starting server shutdown sequence...")
-            print("Server is shutting down...")
-            self.is_running = False
-
-            # Đóng tất cả kết nối đến client
-            for client in self.clients.copy():
-                try:
-                    client.sendall(b"SERVER SHUTDOWN", encoding=CHAR_ENCODING)
-                    
-                    logging.info(f"Closing connection to {client.getpeername()}")
-                    client.close()
-                except:
-                    pass
-
-            for thread in self.client_threads:
-                try:
-                    thread.join(timeout=2.0)
-                    logging.info(f"Thread {thread.name} successfully joined")
-                except Exception as e:
-                    print(f"Error: {e}")
-                    logging.error(f"Error: {e}")
-
-            self.clients.clear()
-            self.client_threads.clear()
-
-            # Đóng server socket
-            if self.server_socket:
-                try:
-                    self.server_socket.close()
-                    logging.info("Server socket successfully closed")
-                except Exception as e:
-                    print(f"Error: {e}")
-                    logging.error(f"Error: {e}")
-
-            for handler in logging.getLogger().handlers:
-                handler.flush()
-                handler.close()
-        except Exception as e:
-            logging.critical(f'Unexpected error during shutdown: {str(e)}')
-            raise
-                
-    
-    def handle_clients(self, client_connect, client_address):
-        """
-        Xử lý client kết nối đến server.
-        """
-        self.clients.add(client_connect)
-        logging.info(f"New connection from {client_address}")
-        print(f"New connection from {client_address}")
-
-        try:
-            # Gửi thông tin file trên server đến client
-            json_data = json.dumps(self.file_data).encode(CHAR_ENCODING)
+            file_data = {}
+            with open(METADATA_FILE, 'w') as outFile:
+                for file in os.listdir(SERVER_FILE_DIRECTORY):
+                    file_path = os.path.join(SERVER_FILE_DIRECTORY, file)
+                    if os.path.isfile(file_path):
+                        size_bytes = os.path.getsize(file_path)
+                        size_readable = self.format_file_size(size_bytes)
+                        file_data[file] = size_bytes
+                        outFile.write(f"{file}: {size_readable}\n")
             
-            # Định dạng độ dài (4 bytes unsigned int)
-            header = struct.pack(">I", len(json_data))
-
-            # Gửi header trước, sau đó là payload
-            client_connect.sendall(header + json_data)
-
-            while self.is_running:
-                # Nhận yêu cầu tải file từ client (format: filename|offset|size)
-                size_request = client_connect.recv(4)
-                size_request = struct.unpack(">I", size_request)[0]
-                request = client_connect.recv(size_request).decode(CHAR_ENCODING)
-                if not request:
-                    break
-
-                # Xử lý yêu cầu tải file từ client
-                if "|" in request:
-
-                    filename, offset, size = request.split("|")
-                    offset, size = int(offset), int(size)
-                    logging.info(f'File download request from {client_address}: {filename}')
-
-                    if filename in self.file_data:
-                        file_path = os.path.join(SERVER_FILES_DIRECTORY, filename)
-
-                        if os.path.exists(file_path) and os.path.isfile(file_path):
-                            with open(file_path, "rb") as file:
-                                file.seek(offset)
-                                part_file_data = file.read(size)
-                                client_connect.sendall(part_file_data)
-                            logging.info(f"File chunk sent to {client_address}")
-                        
-                        else:
-                            client_connect.sendall(b"ERROR: File not found on server!")
+            return file_data
 
         except Exception as e:
-            logging.error(f"Error: {e}")
-            print(f"Error: {e}")
+            print(f"Unexpected error: {e}")
+            logging.error(f"[scan_available_files] Unexpected error: {e}")
+            sys.exit(1)
+    
+    def shutdown_server(self, signum, frame):
+        logging.info("Server is shutting down...")
+        print("Server is shutting down...")
+        self.is_running = False
 
-        finally:
-            self.clients.remove(client_connect)
-            client_connect.close()
-            logging.info(f"Connection from {client_address} closed")
-            print(f"Connection from {client_address} closed")
+        for thread in self.client_threads:
+            try:
+                thread.join(timeout=1.0)
+                logging.info(f"Thread {thread.name} successfully joined")
+            except Exception as e:
+                print(f"Error: {e}")
+                logging.error(f"Error: {e}")
 
-    def start(self):
+        self.client_threads.clear()
+
+        if self.server_socket:
+            try:
+                self.server_socket.close()
+                self.server_socket = None
+            except Exception as e:
+                logging.error(f"[shutdown_server] Error closing server: {e}")
+
+        for handler in logging.getLogger().handlers:
+            handler.flush()
+            handler.close()
+        
+        time.sleep(3)
+    
+    def send_file_list(self, client_addr):
+        if not self.available_files: # Nếu Ko có file trên server
+            message = "ERROR: No files available to the client!"
+            len_message = struct.pack("!I", len(message))
+            self.server_socket.sendto(len_message, client_addr)
+            self.server_socket.sendto(message.encode("utf_8"), client_addr)
+
+            logging.info(f"Sent empty file list to {client_addr}")
+
+            # Nếu ko có file trên server thì đóng server và chương trình để thêm file
+            self.server_socket.close()
+            self.server_socket = None
+            sys.exit(1)
+
+        json_data = json.dumps(self.available_files).encode(CHARACTER_ENCODING)
+        len_json_data = struct.pack("!I", len(json_data))
+        self.server_socket.sendto(len_json_data, client_addr)
+        self.server_socket.sendto(json_data, client_addr)
+        logging.info(f"[send_file_list] Sent file list to {client_addr}")
+
+    def calc_checksum(self, data):
+        """
+        Tính checksum cho dữ liệu nhị phân (binary data) bằng cách gộp các byte thành số 16-bit 
+        và tính bù một (one's complement) của tổng.
+        """
+        if not isinstance(data, (bytes, bytearray)):
+            raise TypeError("Dữ liệu đầu vào phải là kiểu bytes hoặc bytearray.")
+        
+        # Tổng ban đầu
+        checksum = 0
+
+        # Xử lý từng cặp byte
+        length = len(data)
+        for i in range(0, length - 1, 2):
+            # Gộp hai byte thành số 16-bit (big-endian)
+            word = (data[i] << 8) + data[i + 1]
+            checksum += word
+
+        # Nếu độ dài dữ liệu là lẻ, xử lý byte cuối
+        if length % 2 == 1:
+            checksum += data[-1] << 8  # Byte lẻ được coi là byte cao của một số 16-bit
+
+        # Gói gọn checksum trong phạm vi 16-bit
+        checksum = (checksum & 0xFFFF) + (checksum >> 16)  # Cộng dồn các bit carry
+        checksum = (checksum & 0xFFFF)  # Lấy 16 bit cuối
+
+        # Tính bù một (one's complement)
+        checksum = ~checksum & 0xFFFF
+
+        return checksum
+
+    def send_chunk(self, part_addr, file_name, offset_part, size_part, part_number):
         try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
-                self.server_socket = server
-                server.bind((SERVER_HOST, SERVER_PORT))
-                server.listen()
-                server.settimeout(1)
+            chunk_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            path_file = os.path.join(SERVER_FILE_DIRECTORY, file_name)
+            with open(path_file, "rb") as inFile:
+                inFile.seek(offset_part)
+                seq_send = 0
+                total_send = b""
 
-                local_ip = socket.gethostbyname(socket.gethostname())
-                logging.info(f'Server running on {SERVER_HOST}:{SERVER_PORT}') # Ghi log server đang chạy
-                logging.info(f'Local IP address: {local_ip}') # Ghi log địa chỉ IP local
-                print(f"Server running on {SERVER_HOST}:{SERVER_PORT}")
-                print(f"Local IP address: {local_ip}")
+                while len(total_send) < size_part:
+                    remaining = size_part - len(total_send)
+                    size_data_send = min(remaining, CHUNK_BUFFER_SIZE)
+                    data = inFile.read(size_data_send)
+                    
+                    # checksum = sum(data) % 256
+                    checksum = self.calc_checksum(data)
+                    packet_format = f"!I I I {len(data)}s"
+                    packet = struct.pack(packet_format, part_number, seq_send, checksum, data)
 
-                while self.is_running:
+                    chunk_socket.sendto(packet, part_addr)
+                    logging.info(f"[send_chunk] Sent {len(packet)} bytes for chunk {part_number}_{seq_send} to {part_addr}")
+
                     try:
-                        client_connect, client_address = server.accept()
-                        print(f"New connection from {client_address}")
-                        logging.info(f'New connection from {client_address}') # Ghi log kết nối mới từ client
+                        chunk_socket.settimeout(10)  # Timeout chờ ACK/NAK
+                        checking_data, _ = chunk_socket.recvfrom(MAX_RECEIVE_BYTES)
+                        message = checking_data.decode(CHARACTER_ENCODING)
 
-                        if self.is_running:
-                            client_handle = threading.Thread(target=self.handle_clients, args=(client_connect, client_address))
-                            client_handle.daemon = True
-                            client_handle.start()
-                            self.client_threads.append(client_handle)
+                        if message == f"ACK-{part_number}_{seq_send}":
+                            logging.info(f"Received ACK for chunk {part_number}_{seq_send} from {part_addr}")
+                            total_send += data
+                            seq_send += 1
+                        elif message == f"NAK-{part_number}_{seq_send}":
+                            logging.warning(f"[send_chunk] NAK for chunk {part_number}_{seq_send}, retrying...")
+                            continue
                     except socket.timeout:
-                        continue 
-                    except OSError:
-                        break
+                        logging.warning(f"[send_chunk] Timeout for chunk {part_number}_{seq_send}, retrying...")
+                        continue
+                    except Exception as e:
+                        print(f"ERROR: {e}")
+        except Exception as e:
+            logging.error(f"[send_chunk] Error: {e}")
+        finally:
+            if chunk_socket:
+                chunk_socket.close()
+
+    def start_server(self):
+        try:
+            logging.info("[start_server] Server started and waiting for client requests.")
+            print("Server started and waiting for client requests...")
+
+            self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.server_socket.bind((SERVER_HOST, SERVER_PORT))
+            local_ip = socket.gethostbyname(socket.gethostname())
+            logging.info(f"[start_server] Server initialized on {SERVER_HOST}:{SERVER_PORT}")
+            print(f"Server initialized on {SERVER_HOST}:{SERVER_PORT}")
+            print(f"Local IP address: {local_ip}")
+
+            len_data, addr = self.server_socket.recvfrom(4)
+            len_data = struct.unpack("!I", len_data)[0]
+            data, addr = self.server_socket.recvfrom(len_data)
+
+            message = data.decode(CHARACTER_ENCODING)
+            logging.info(f"Received GET_FILE_LIST from {addr}: {message}")
+            self.send_file_list(addr)
+            
+            while self.is_running:
+                try:
+                    if message == "GET_FILE_LIST":
+                        while self.is_running:
+                            part_data, part_addr = self.server_socket.recvfrom(MAX_RECEIVE_BYTES)
+                            message_part = part_data.decode(CHARACTER_ENCODING)
+                            logging.info(f"Received GET_CHUNK {part_addr}: {message_part}")
+                            
+                            if (message_part.startswith("GET_CHUNK")):
+                                parts = message_part.strip().split('|')
+                                _, file_name, offset_part, size_part, part_number = parts
+                                offset_part = int(offset_part)
+                                size_part = int(size_part)
+                                part_number = int(part_number)
+
+                            if self.is_running:
+                                logging.info(f"Processing GET_CHUNK for {file_name}, chunk {part_number}, offset {offset_part}, size {size_part}")
+                                client_thread = threading.Thread(target=self.send_chunk, args=(part_addr, file_name, offset_part, size_part, part_number), daemon=True)
+                                client_thread.start()
+                                self.client_threads.append(client_thread)
+                except socket.timeout:
+                    continue 
+                except OSError:
+                    break
         except KeyboardInterrupt:
-            self.handle_shutdown(signal.SIGINT, None)
+            self.shutdown_server(signal.SIGINT, None)
             logging.info("Keyboard interrupt received")
             print("Server shutdown initiated by keyboard interrupt")
         except Exception as e:
-            self.handle_shutdown(signal.SIGINT, None)
+            self.shutdown_server(signal.SIGINT, None)
             logging.error(f"Unexpected error: {str(e)}")
             print(f"Error: {e}")
         finally:
             if self.is_running:
-                self.handle_shutdown(signal.SIGINT, None)
+                self.shutdown_server(signal.SIGINT, None)
 
             for handler in logging.getLogger().handlers:
                 handler.flush()
 
 if __name__ == '__main__':
     server = Server()
-    server.start() # Khởi động server
+    server.start_server() # Khởi động server

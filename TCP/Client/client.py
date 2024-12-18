@@ -120,12 +120,12 @@ class Client:
                 print("Connected to server.")
 
                 # Nhận danh sách file từ server
-                header = self.client_socket.recv(4)
+                header = self.client_socket.recv(8)
                 if not header:
                     return False
                     
                 # Giải mã độ dài từ header
-                data_length = struct.unpack(">I", header)[0]
+                data_length = struct.unpack(">Q", header)[0]
                 
                 # Nhận toàn bộ dữ liệu dựa trên độ dài đã giải mã
                 self.server_files = json.loads(self.client_socket.recv(data_length).decode(CHAR_ENCODING))
@@ -231,23 +231,21 @@ class Client:
                 part_file_socket.settimeout(5)
                 
                 # Bỏ qua danh sách file ban đầu
-                header = part_file_socket.recv(4)
+                header = part_file_socket.recv(8)
 
                 if not header:
                     print("Connection lost")
                     continue
-                    
-                # Giải mã độ dài từ header
-                data_length = struct.unpack(">I", header)[0]
-                
+              
                 # Bỏ qua dữ liệu từ server
+                data_length = struct.unpack(">Q", header)[0]
                 part_file_socket.recv(data_length).decode(CHAR_ENCODING)
 
                 # Gửi yêu cầu tải file đến server
 
                 # # HOÀNG LÀM:
                 message = f"{filename}|{offset}|{part_size}".encode(CHAR_ENCODING)
-                size_message_header = struct.pack(">I", len(message))
+                size_message_header = struct.pack(">Q", len(message))
                 # part_file_socket.sendall(size_message)
                 # ###
 
@@ -287,6 +285,8 @@ class Client:
                 return False
             finally:
                 if part_file_socket:
+                    header = struct.pack(">Q", len(b"CLOSE PART SOCKET")) 
+                    part_file_socket.sendall(header + b"CLOSE PART SOCKET")
                     part_file_socket.close()
                     part_file_socket = None
         
@@ -391,20 +391,15 @@ class Client:
                 break
             except Exception as e:
                 print(f"Error: {e}")
-                time.sleep(5)
             finally:
-                if self.is_connected:
+                if self.is_connected and self.client_socket:
                     try:
-                        response = self.client_socket.recv(1024).decode(CHAR_ENCODING)
-                        self.client_socket.settimeout(5)
-                        if "SERVER SHUTDOWN" in response:
-                            print("Server has shut down. Disconnecting...")
+                        message = self.client_socket.recv(15).decode(CHAR_ENCODING)
+                        if "SERVER_SHUTDOWN" in message:
+                            print("\33[JServer has shut down. Disconnecting...")
                             self.is_connected = False
                             self.client_socket.close()
-                    except ConnectionResetError as e:
-                        print(f"Connection was forcibly closed by the server: {e}")
-                        self.is_connected = False
-                        self.client_socket.close()
+                            break
                     except socket.timeout:
                         pass
                     except Exception as e:

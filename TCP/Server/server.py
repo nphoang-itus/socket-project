@@ -7,6 +7,7 @@ import sys
 import logging
 import datetime
 import struct
+import time
 
 LOG_DIRECTORY = 'logs'
 if not os.path.exists(LOG_DIRECTORY):
@@ -35,12 +36,10 @@ def scan_available_files():
     """
     if not os.path.exists(SERVER_FILES_DIRECTORY):
         logging.error(f"Error: Directory '{SERVER_FILES_DIRECTORY}' does not exist.")
-        print(f"Error: Directory '{SERVER_FILES_DIRECTORY}' does not exist.")
         sys.exit(1)  # Exit the program if the directory does not exist
     
     if not os.access(SERVER_FILES_DIRECTORY, os.R_OK):
         logging.error(f"Error: Directory '{SERVER_FILES_DIRECTORY}' is not accessible.")
-        print(f"Error: Directory '{SERVER_FILES_DIRECTORY}' is not accessible.")
         sys.exit(1)  # Exit the program if the directory is not accessible
     
     file_data = {}
@@ -79,6 +78,7 @@ class Server:
         self.clients = set()  # Lưu thông tin client kết nối đến server
         self.server_socket = None  # Socket server
         self.client_threads = []    # Luồng xử lý client
+        self.finished_threads = [] # Luồng đã kết thúc
         signal.signal(signal.SIGINT, self.handle_shutdown) # Xử lý tắt server khi nhận tín hiệu SIGINT
     
     def handle_shutdown(self, signum, frame):
@@ -87,25 +87,25 @@ class Server:
         """
         try:
             logging.info("Starting server shutdown sequence...")
-            print("Server is shutting down...")
             self.is_running = False
 
             # Đóng tất cả kết nối đến client
-            for client in self.clients.copy():
+            for client in self.clients:
                 try:
-                    client.sendall(b"SERVER SHUTDOWN", encoding=CHAR_ENCODING)
-                    
+                    message = (f"SERVER_SHUTDOWN").encode(CHAR_ENCODING)
+                    client.sendall(message)
+                    time.sleep(5)
+                except Exception as e:
+                    logging.error(f"Error: {e}")
+                finally:
                     logging.info(f"Closing connection to {client.getpeername()}")
                     client.close()
-                except:
-                    pass
-
+                
             for thread in self.client_threads:
                 try:
                     thread.join(timeout=2.0)
                     logging.info(f"Thread {thread.name} successfully joined")
                 except Exception as e:
-                    print(f"Error: {e}")
                     logging.error(f"Error: {e}")
 
             self.clients.clear()
@@ -117,12 +117,12 @@ class Server:
                     self.server_socket.close()
                     logging.info("Server socket successfully closed")
                 except Exception as e:
-                    print(f"Error: {e}")
                     logging.error(f"Error: {e}")
 
             for handler in logging.getLogger().handlers:
                 handler.flush()
                 handler.close()
+
         except Exception as e:
             logging.critical(f'Unexpected error during shutdown: {str(e)}')
             raise
@@ -133,25 +133,31 @@ class Server:
         Xử lý client kết nối đến server.
         """
         self.clients.add(client_connect)
-        logging.info(f"New connection from {client_address}")
-        print(f"New connection from {client_address}")
 
         try:
             # Gửi thông tin file trên server đến client
             json_data = json.dumps(self.file_data).encode(CHAR_ENCODING)
             
             # Định dạng độ dài (4 bytes unsigned int)
-            header = struct.pack(">I", len(json_data))
+            header = struct.pack(">Q", len(json_data))
 
             # Gửi header trước, sau đó là payload
             client_connect.sendall(header + json_data)
 
             while self.is_running:
                 # Nhận yêu cầu tải file từ client (format: filename|offset|size)
-                size_request = client_connect.recv(4)
-                size_request = struct.unpack(">I", size_request)[0]
+                size_request = client_connect.recv(8)
+
+                if not size_request:
+                    break
+
+                size_request = struct.unpack(">Q", size_request)[0]
                 request = client_connect.recv(size_request).decode(CHAR_ENCODING)
                 if not request:
+                    break
+                
+                if "CLOSE PART SOCKET" in request:
+                    logging.info(f'Message: "{request}" from {client_address}')
                     break
 
                 # Xử lý yêu cầu tải file từ client
@@ -176,13 +182,11 @@ class Server:
 
         except Exception as e:
             logging.error(f"Error: {e}")
-            print(f"Error: {e}")
 
         finally:
             self.clients.remove(client_connect)
             client_connect.close()
             logging.info(f"Connection from {client_address} closed")
-            print(f"Connection from {client_address} closed")
 
     def start(self):
         try:
@@ -195,13 +199,10 @@ class Server:
                 local_ip = socket.gethostbyname(socket.gethostname())
                 logging.info(f'Server running on {SERVER_HOST}:{SERVER_PORT}') # Ghi log server đang chạy
                 logging.info(f'Local IP address: {local_ip}') # Ghi log địa chỉ IP local
-                print(f"Server running on {SERVER_HOST}:{SERVER_PORT}")
-                print(f"Local IP address: {local_ip}")
 
                 while self.is_running:
                     try:
                         client_connect, client_address = server.accept()
-                        print(f"New connection from {client_address}")
                         logging.info(f'New connection from {client_address}') # Ghi log kết nối mới từ client
 
                         if self.is_running:
@@ -218,11 +219,9 @@ class Server:
         except KeyboardInterrupt:
             self.handle_shutdown(signal.SIGINT, None)
             logging.info("Keyboard interrupt received")
-            print("Server shutdown initiated by keyboard interrupt")
         except Exception as e:
             self.handle_shutdown(signal.SIGINT, None)
             logging.error(f"Unexpected error: {str(e)}")
-            print(f"Error: {e}")
         finally:
             if self.is_running:
                 self.handle_shutdown(signal.SIGINT, None)

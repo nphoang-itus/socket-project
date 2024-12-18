@@ -209,7 +209,6 @@ class Server:
                             client_handle = threading.Thread(target=self.handle_clients, 
                                                              args=(client_connect, client_address), 
                                                              daemon=True)
-                            client_handle.daemon = True
                             client_handle.start()
                             self.client_threads.append(client_handle)
                     except socket.timeout:

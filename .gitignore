@@ -1,4 +1,8 @@
 .DS_Store
 /TCP/Server/files
 /TCP/Server/logs
+/TCP/Server/server_files
 *.txt
+/TCP/Client/bin
+/TCP/Client/downloads
+/UDP

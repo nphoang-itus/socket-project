@@ -6,9 +6,6 @@ import signal
 import time
 import ipaddress
 import sys
-import tkinter as tk
-from tkinter import messagebox
-from tkinter import ttk
 import struct
 
 # Cấu hình mạng
@@ -16,8 +13,8 @@ SERVER_HOST = None
 SERVER_PORT = None
 CHUNK_SIZE = 1024 * 1024
 DOWNLOAD_DIR = "downloads"
-CHUNK_STORAGE = "bin"
-char_encoding = "utf-8"  # Bộ mã hóa ký tự
+PART_STORAGE = "bin"
+CHAR_ENCODING = "utf-8"  # Bộ mã hóa ký tự
 dot_progress = 0
 
 def get_server_ip():
@@ -52,7 +49,7 @@ def get_server_port():
         except KeyboardInterrupt:
             sys.exit(1)
 
-def convert_size(size_bytes):
+def format_size_file(size_bytes):
     """
     Chuyển đổi kích thước file từ bytes sang KB, MB, hoặc GB phù hợp.
     """
@@ -67,7 +64,7 @@ def convert_size(size_bytes):
     else:
         return f"{size_bytes}B"
     
-def scan_files_downloaded_on_client():
+def scan_downloaded_files():
     """
     Quét tất cả các file trong thư mục downloads để kiểm tra file đã tải xong.
     """
@@ -92,7 +89,7 @@ class Client:
     """
     def __init__(self):
         self.server_files = {}       # Danh sách file từ server
-        self.downloaded_files = scan_files_downloaded_on_client() # File đã tải xong
+        self.downloaded_files = scan_downloaded_files() # File đã tải xong
         self.is_connected = True
         self.progress = {}
         self.client_socket = None
@@ -131,9 +128,8 @@ class Client:
                 data_length = struct.unpack(">I", header)[0]
                 
                 # Nhận toàn bộ dữ liệu dựa trên độ dài đã giải mã
-                self.server_files = json.loads(self.client_socket.recv(data_length).decode(char_encoding))
+                self.server_files = json.loads(self.client_socket.recv(data_length).decode(CHAR_ENCODING))
                 self.print_available_files()
-                self.start_file_selector_thread()
             
             # Kết nối thành công và không có ngoại lệ
             # Hoặc đã có socket rồi
@@ -157,7 +153,7 @@ class Client:
         print(f"{'-' * 30}")
         print("Available files on the server:")
         for filename, size in self.server_files.items():
-            size_readable = convert_size(size)
+            size_readable = format_size_file(size)
             print(f"{filename}: {size_readable}")
         print(f"{'-' * 30}" + "\n")
     
@@ -206,7 +202,7 @@ class Client:
         In tiến trình tải file.
         """
         with self.print_lock:
-            self.progress[f"{filename}_chunk_{chunk_id}"] = progress_percent
+            self.progress[f"{filename}_part_{chunk_id}"] = progress_percent
             
             # Xử lý in thông tin tiến trình đầu tiên
             if chunk_id == 0 and progress_percent == 0:
@@ -216,11 +212,11 @@ class Client:
                 
           # In tiến trình tải file
             for i in range(4):
-                progress_display = self.progress.get(f"{filename}_chunk_{i}", 0)
+                progress_display = self.progress.get(f"{filename}_part_{i}", 0)
                 bar_length = 20  # Độ dài của thanh tiến trình
                 filled_length = int(bar_length * progress_display // 100)
                 bar = '█' * filled_length + ' ' * (bar_length - filled_length)
-                print(f"\033[K{filename} - Chunk {i+1} {bar} {progress_display:.0f}%")
+                print(f"\033[K{filename} - Part {i+1} {bar} {progress_display:.0f}%")
     
     def download_part_file(self, filename, offset, part_size, part_number):
         """
@@ -245,10 +241,17 @@ class Client:
                 data_length = struct.unpack(">I", header)[0]
                 
                 # Bỏ qua dữ liệu từ server
-                part_file_socket.recv(data_length).decode(char_encoding)
+                part_file_socket.recv(data_length).decode(CHAR_ENCODING)
 
                 # Gửi yêu cầu tải file đến server
-                part_file_socket.sendall(f"{filename}|{offset}|{part_size}".encode(char_encoding))
+
+                # # HOÀNG LÀM:
+                message = f"{filename}|{offset}|{part_size}".encode(CHAR_ENCODING)
+                size_message_header = struct.pack(">I", len(message))
+                # part_file_socket.sendall(size_message)
+                # ###
+
+                part_file_socket.sendall((size_message_header + message))
                 part_file_buffer = b''  # Lưu trữ dữ liệu tạm thời
                 
                 total_received = 0   # Tổng số byte nhận được
@@ -270,7 +273,7 @@ class Client:
                     self.print_progress(filename, part_number, ((total_received / part_size) * 100))
 
                 # Sau khi nhận đủ part_size, ghi dữ liệu vào file
-                part_filename = os.path.join(CHUNK_STORAGE, f"{filename}.chunk{part_number}")
+                part_filename = os.path.join(PART_STORAGE, f"{filename}.part{part_number}")
                 os.makedirs(os.path.dirname(part_filename), exist_ok=True)
                 with open(part_filename, "wb") as part_file:
                     part_file.write(part_file_buffer)
@@ -297,7 +300,7 @@ class Client:
         final_filename = os.path.join(DOWNLOAD_DIR, filename)
         with open(final_filename, "wb") as final_file:
             for part_number in range(4):
-                part_filename = os.path.join(CHUNK_STORAGE, f"{filename}.chunk{part_number}")
+                part_filename = os.path.join(PART_STORAGE, f"{filename}.part{part_number}")
                 with open(part_filename, "rb") as part_file:
                     final_file.write(part_file.read())
                 os.remove(part_filename)
@@ -364,25 +367,9 @@ class Client:
         Xóa các phần chunk của file.
         """
         for part_number in range(4):
-            part_filename = os.path.join(CHUNK_STORAGE, f"{filename}.chunk{part_number}")
+            part_filename = os.path.join(PART_STORAGE, f"{filename}.part{part_number}")
             if os.path.exists(part_filename):
                 os.remove(part_filename)
-
-    def start_file_selector_thread(self):
-        """
-        Khởi động luồng giao diện chọn file.
-        """
-        self.file_selector_thread = threading.Thread(target=self.show_file_selector)
-        self.file_selector_thread.daemon = True
-        self.file_selector_thread.start()
-
-    def show_file_selector(self):
-        """
-        Hiển thị giao diện chọn file bằng tkinter.
-        """
-        root = tk.Tk()
-        app = FileSelectorApp(root, list(self.server_files.keys()))
-        root.mainloop()
 
     def start(self):
         while self.is_connected:
@@ -408,7 +395,7 @@ class Client:
             finally:
                 if self.is_connected:
                     try:
-                        response = self.client_socket.recv(1024).decode(char_encoding)
+                        response = self.client_socket.recv(1024).decode(CHAR_ENCODING)
                         self.client_socket.settimeout(5)
                         if "SERVER SHUTDOWN" in response:
                             print("Server has shut down. Disconnecting...")
@@ -426,52 +413,8 @@ class Client:
                         self.client_socket.close()
         print("\33[JShut down...")
 
-class FileSelectorApp:
-    def __init__(self, master, available_files):
-        """
-        Khởi tạo giao diện chọn file.
-        """
-        self.master = master
-        self.available_files = available_files
-        self.selected_files = []
-        self.current_files = available_files.copy()  # Thêm biến này để lưu trữ danh sách các file hiện tại
-
-        self.master.title("File Selector")
-        self.master.geometry("300x400")
-
-        self.label = tk.Label(master, text="Available Files")
-        self.label.pack()
-
-        self.file_listbox = tk.Listbox(master, selectmode=tk.MULTIPLE)
-        for file in available_files:
-            self.file_listbox.insert(tk.END, file)
-        self.file_listbox.pack(fill=tk.BOTH, expand=True)
-
-        self.select_button = tk.Button(master, text="Select Files", command=self.select_files)
-        self.select_button.pack()
-
-    def select_files(self):
-        """
-        Chọn file và ghi vào file input.txt.
-        """
-        selected_indices = self.file_listbox.curselection()
-        self.selected_files = [self.current_files[i] for i in selected_indices]  # Sử dụng self.current_files
-
-        if self.selected_files:
-            with open("input.txt", "a") as f:  # Mở file ở chế độ append
-                for file in self.selected_files:
-                    f.write(file + "\n")
-            
-            # Xóa các file đã chọn khỏi danh sách hiển thị và cập nhật self.current_files
-            for index in reversed(selected_indices):
-                self.file_listbox.delete(index)
-                del self.current_files[index]  # Cập nhật self.current_files
-        else:
-            messagebox.showwarning("No Selection", "No files selected")
-
-
 if __name__ == "__main__":
     SERVER_HOST = get_server_ip()
     SERVER_PORT = get_server_port()
     client = Client()
-    client.start() 
+    client.start()

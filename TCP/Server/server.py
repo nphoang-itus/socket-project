@@ -8,11 +8,11 @@ import logging
 import datetime
 import struct
 
-LOG_DIR = 'logs'
-if not os.path.exists(LOG_DIR):
-    os.makedirs(LOG_DIR)
+LOG_DIRECTORY = 'logs'
+if not os.path.exists(LOG_DIRECTORY):
+    os.makedirs(LOG_DIRECTORY)
 
-log_file = os.path.join(LOG_DIR, f'server_{datetime.datetime.now().strftime('%d-%m-%Y_%Hh%Mm%Ss')}.log')
+log_file = os.path.join(LOG_DIRECTORY, f'server_{datetime.datetime.now().strftime('%d-%m-%Y_%Hh%Mm%Ss')}.log')
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -25,28 +25,28 @@ logging.basicConfig(
 # Cấu hình mạng
 SERVER_HOST = '0.0.0.0'
 SERVER_PORT = 6264
-directory = "files"  # Thư mục chứa file
-char_encoding = "utf-8"  # Bộ mã hóa ký tự
+SERVER_FILES_DIRECTORY = "server_files"  # Thư mục chứa file
+CHAR_ENCODING = "utf-8"  # Bộ mã hóa ký tự
 
-def scan_files_for_server():
+def scan_available_files():
     """
     Quét tất cả các file trong thư mục hiện tại, tính kích thước,
     lưu vào `data.txt` và trả về thông tin file dưới dạng dictionary.
     """
-    if not os.path.exists(directory):
-        logging.error(f"Error: Directory '{directory}' does not exist.")
-        print(f"Error: Directory '{directory}' does not exist.")
+    if not os.path.exists(SERVER_FILES_DIRECTORY):
+        logging.error(f"Error: Directory '{SERVER_FILES_DIRECTORY}' does not exist.")
+        print(f"Error: Directory '{SERVER_FILES_DIRECTORY}' does not exist.")
         sys.exit(1)  # Exit the program if the directory does not exist
     
-    if not os.access(directory, os.R_OK):
-        logging.error(f"Error: Directory '{directory}' is not accessible.")
-        print(f"Error: Directory '{directory}' is not accessible.")
+    if not os.access(SERVER_FILES_DIRECTORY, os.R_OK):
+        logging.error(f"Error: Directory '{SERVER_FILES_DIRECTORY}' is not accessible.")
+        print(f"Error: Directory '{SERVER_FILES_DIRECTORY}' is not accessible.")
         sys.exit(1)  # Exit the program if the directory is not accessible
     
     file_data = {}
     with open("data.txt", "w") as data_file:
-        for filename in os.listdir(directory):
-            file_path = os.path.join(directory, filename)
+        for filename in os.listdir(SERVER_FILES_DIRECTORY):
+            file_path = os.path.join(SERVER_FILES_DIRECTORY, filename)
             if os.path.isfile(file_path):
                 size_bytes = os.path.getsize(file_path)
                 size_readable = convert_size(size_bytes)
@@ -74,7 +74,7 @@ class Server:
     Server xử lý đa luồng cho phép client tải file theo từng chunk.
     """
     def __init__(self):
-        self.file_datas = scan_files_for_server()    # Lưu thông tin file trên server
+        self.file_data = scan_available_files()    # Lưu thông tin file trên server
         self.is_running = True   # Biến kiểm tra server đang hoạt động hay không
         self.clients = set()  # Lưu thông tin client kết nối đến server
         self.server_socket = None  # Socket server
@@ -93,7 +93,7 @@ class Server:
             # Đóng tất cả kết nối đến client
             for client in self.clients.copy():
                 try:
-                    client.sendall(b"SERVER SHUTDOWN", encoding=char_encoding)
+                    client.sendall(b"SERVER SHUTDOWN", encoding=CHAR_ENCODING)
                     
                     logging.info(f"Closing connection to {client.getpeername()}")
                     client.close()
@@ -138,7 +138,7 @@ class Server:
 
         try:
             # Gửi thông tin file trên server đến client
-            json_data = json.dumps(self.file_datas).encode(char_encoding)
+            json_data = json.dumps(self.file_data).encode(CHAR_ENCODING)
             
             # Định dạng độ dài (4 bytes unsigned int)
             header = struct.pack(">I", len(json_data))
@@ -148,7 +148,9 @@ class Server:
 
             while self.is_running:
                 # Nhận yêu cầu tải file từ client (format: filename|offset|size)
-                request = client_connect.recv(1024).decode(char_encoding)
+                size_request = client_connect.recv(4)
+                size_request = struct.unpack(">I", size_request)[0]
+                request = client_connect.recv(size_request).decode(CHAR_ENCODING)
                 if not request:
                     break
 
@@ -159,8 +161,8 @@ class Server:
                     offset, size = int(offset), int(size)
                     logging.info(f'File download request from {client_address}: {filename}')
 
-                    if filename in self.file_datas:
-                        file_path = os.path.join(directory, filename)
+                    if filename in self.file_data:
+                        file_path = os.path.join(SERVER_FILES_DIRECTORY, filename)
 
                         if os.path.exists(file_path) and os.path.isfile(file_path):
                             with open(file_path, "rb") as file:
@@ -203,12 +205,12 @@ class Server:
                         logging.info(f'New connection from {client_address}') # Ghi log kết nối mới từ client
 
                         if self.is_running:
-                            client_hanlder = threading.Thread(target=self.handle_clients, 
+                            client_handle = threading.Thread(target=self.handle_clients, 
                                                              args=(client_connect, client_address), 
                                                              daemon=True)
-                            client_hanlder.daemon = True
-                            client_hanlder.start()
-                            self.client_threads.append(client_hanlder)
+                            client_handle.daemon = True
+                            client_handle.start()
+                            self.client_threads.append(client_handle)
                     except socket.timeout:
                         continue    
                     except OSError:

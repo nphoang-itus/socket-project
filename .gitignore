@@ -1,7 +1,13 @@
 .DS_Store
-/TCP/Server/files
-/TCP/Server/logs
-/TCP/Server/server_files
+*.log
 *.txt
+
 /TCP/Client/bin
 /TCP/Client/downloads
+/TCP/Server/logs
+/TCP/Server/server_files
+
+/UDP/Client/downloads
+/UDP/Server/server_files
+/UDP/Client/*.txt
+/UDP/Server/*.txt

@@ -146,8 +146,8 @@ class Client:
         global dot_progress
         dot_progress += 1 if dot_progress < 3 else -3
 
-        print('\033[3F', end='')
-        print("\033[KMonitoring input.txt for download requests" + '.' * dot_progress)
+        print('\033[J', end='')
+        print("Monitoring input.txt for download requests" + '.' * dot_progress)
 
         try:
             with open(INPUT_TXT, 'r') as inFile:
@@ -158,21 +158,27 @@ class Client:
                     return []
 
             files = content.split('\n')
-
-            new_files = []
-            for item in files:
-                if item not in self.available_files:
-                    logging.warning(f"[monitor_input] File {item} does not exist on the server!")
-                    print(f"File {item} does not exist on the server!")
-                    continue
-                if item not in self.downloaded_files:
-                    new_files.append(item)
-
-            if new_files:
-                print("New files to download:", new_files)
-                logging.info(f"[monitor_input] New files to download: {new_files}")
-
-            return new_files
+        
+            new_files_to_download = [f for f in files 
+                                        if f in self.available_files 
+                                        and f not in self.downloaded_files]
+            
+            invalid_files = [f for f in files
+                                if f not in self.available_files]
+            
+            if new_files_to_download:
+                print('-' * 30 + "\nNew files to download:")
+                for filename in new_files_to_download:
+                    print(filename)
+                print('-' * 30)
+            else:
+                print('-' * 30 + "\nFiles not found on the server:")
+                for filename in invalid_files:
+                    print(filename)
+                print("No new files to download!\n" + '-' * 30)
+                print(f"\033[{len(invalid_files) + 5}F", end='')
+            return new_files_to_download
+        
         except Exception as e: # Sẽ out chương trình do ko mở được input.txt
             print(f"Error: {e}")
             logging.error(f"[monitor_input] Error: {e}")

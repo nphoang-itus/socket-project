@@ -17,10 +17,12 @@ METADATA_FILE = "data.txt"
 SERVER_FILE_DIRECTORY = "server_files"
 
 logging.basicConfig(
-    filename = "server.log",
-    level = logging.INFO,
-    format = "%(asctime)s || %(levelname)s || %(message)s",
-    filemode = 'w'
+    level=logging.INFO,
+    format="%(asctime)s || %(levelname)s || %(message)s",
+    handlers=[
+        logging.FileHandler("server.log", mode='w'),
+        logging.StreamHandler(sys.stdout)
+    ]
 )
 
 class Server:
@@ -62,13 +64,11 @@ class Server:
             return file_data
 
         except Exception as e:
-            print(f"Unexpected error: {e}")
             logging.error(f"[scan_available_files] Unexpected error: {e}")
             sys.exit(1)
     
     def shutdown_server(self, signum, frame):
         logging.info("Server is shutting down...")
-        print("Server is shutting down...")
         self.is_running = False
 
         for thread in self.client_threads:
@@ -183,7 +183,7 @@ class Server:
                         logging.warning(f"[send_chunk] Timeout for chunk {part_number}_{seq_send}, retrying...")
                         continue
                     except Exception as e:
-                        print(f"ERROR: {e}")
+                        logging.error(f"[send_chunk] Error: {e}")
         except Exception as e:
             logging.error(f"[send_chunk] Error: {e}")
         finally:
@@ -193,24 +193,22 @@ class Server:
     def start_server(self):
         try:
             logging.info("[start_server] Server started and waiting for client requests.")
-            print("Server started and waiting for client requests...")
 
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.server_socket.bind((SERVER_HOST, SERVER_PORT))
             local_ip = socket.gethostbyname(socket.gethostname())
 
             logging.info(f"[start_server] Server initialized on {SERVER_HOST}:{SERVER_PORT}")
-            print(f"Server initialized on {SERVER_HOST}:{SERVER_PORT}")
-            print(f"Local IP address: {local_ip}")
+            logging.info(f"[start_server] Local IP address: {local_ip}")
 
             len_data, addr = self.server_socket.recvfrom(4)
             len_data = struct.unpack("!I", len_data)[0]
             data, addr = self.server_socket.recvfrom(len_data)
-            self.server_socket.settimeout(1)
 
             message = data.decode(CHARACTER_ENCODING)
             logging.info(f"Received GET_FILE_LIST from {addr}: {message}")
             self.send_file_list(addr)
+            self.server_socket.settimeout(1)
             
             while self.is_running:
                 try:
@@ -239,11 +237,9 @@ class Server:
         except KeyboardInterrupt:
             self.shutdown_server(signal.SIGINT, None)
             logging.info("Keyboard interrupt received")
-            print("Server shutdown initiated by keyboard interrupt")
         except Exception as e:
             self.shutdown_server(signal.SIGINT, None)
             logging.error(f"Unexpected error: {str(e)}")
-            print(f"Error: {e}")
         finally:
             if self.is_running:
                 self.shutdown_server(signal.SIGINT, None)

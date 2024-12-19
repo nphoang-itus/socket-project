@@ -28,6 +28,7 @@ SERVER_HOST = '0.0.0.0'
 SERVER_PORT = 6264
 SERVER_FILES_DIRECTORY = "server_files"  # Thư mục chứa file
 CHAR_ENCODING = "utf-8"  # Bộ mã hóa ký tự
+METADATA_FILE = "data.txt"
 
 def scan_available_files():
     """
@@ -43,7 +44,7 @@ def scan_available_files():
         sys.exit(1)  # Exit the program if the directory is not accessible
     
     file_data = {}
-    with open("data.txt", "w") as data_file:
+    with open(METADATA_FILE, "w") as data_file:
         for filename in os.listdir(SERVER_FILES_DIRECTORY):
             file_path = os.path.join(SERVER_FILES_DIRECTORY, filename)
             if os.path.isfile(file_path):

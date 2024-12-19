@@ -11,10 +11,11 @@ import struct
 # Cấu hình mạng
 SERVER_HOST = None
 SERVER_PORT = None
-CHUNK_SIZE = 1024 * 1024
+CHUNK_SIZE = 5 * 1024 * 1024 #5MB
 DOWNLOAD_DIR = "downloads"
 PART_STORAGE = "bin"
 CHAR_ENCODING = "utf-8"  # Bộ mã hóa ký tự
+INPUT_TXT = "input.txt"
 dot_progress = 0
 
 def get_server_ip():
@@ -167,11 +168,11 @@ class Client:
         print("Monitoring input.txt for download requests" + '.' * dot_progress)
 
         try:
-            if not os.path.exists('input.txt'):
+            if not os.path.exists(INPUT_TXT):
                 print("ERROR: File 'input.txt' not found!")
                 return []
             
-            with open('input.txt', 'r') as input_file:
+            with open(INPUT_TXT, 'r') as input_file:
                 files_to_download = input_file.read().strip().split("\n")
 
             new_files_to_download = [f for f in files_to_download 

@@ -146,7 +146,7 @@ class Client:
         global dot_progress
         dot_progress += 1 if dot_progress < 3 else -3
 
-        print('\n\033[3F', end='')
+        print('\033[3F', end='')
         print("\033[KMonitoring input.txt for download requests" + '.' * dot_progress)
 
         try:

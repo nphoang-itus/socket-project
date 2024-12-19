@@ -1,4 +1,0 @@
-.DS_Store: 6.00KB
-video1.mp4: 320.24MB
-file.zip: 23.22MB
-image3.JPG: 4.12MB

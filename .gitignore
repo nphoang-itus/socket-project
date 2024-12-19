@@ -2,12 +2,10 @@
 *.log
 *.txt
 
-/TCP/Client/bin
-/TCP/Client/downloads
-/TCP/Server/logs
-/TCP/Server/server_files
+SOURCE/TCP/Client/bin
+SOURCE/TCP/Client/downloads
+SOURCE/TCP/Server/logs
+SOURCE/TCP/Server/server_files
 
-/UDP/Client/downloads
-/UDP/Server/server_files
-/UDP/Client/*.txt
-/UDP/Server/*.txt
+SOURCE/UDP/Client/downloads
+SOURCE/UDP/Server/server_files

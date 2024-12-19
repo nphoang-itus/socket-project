@@ -24,20 +24,7 @@ logging.basicConfig(
     filemode = 'w'
 )
 
-class Client:
-    def __init__(self):
-        SERVER_HOST = self.get_server_ip()
-        SERVER_PORT = self.get_server_port()
-        self.server_addr = (SERVER_HOST, SERVER_PORT)
-        self.available_files = {}
-        self.downloaded_files = set()
-        self.is_running = True
-        self.progress = {}
-        self.client_socket = None
-        self.print_lock = threading.Lock()
-        signal.signal(signal.SIGINT, self.handle_shutdown)
-    
-    def get_server_ip(self):
+def get_server_ip():
         """
         Nhập IP server từ người dùng.
         """
@@ -53,21 +40,32 @@ class Client:
             except KeyboardInterrupt:
                 sys.exit(1)
 
-    def get_server_port(self):
-        """
-        Nhập cổng server từ người dùng.
-        """
-        while True:
-            try:
-                port = int(input("Nhập cổng server: "))
-                if 1024 <= port <= 65535:
-                    return port
-                else:
-                    print("Cổng phải nằm trong khoảng từ 1024 đến 65535.")
-            except ValueError:
-                print("Cổng không hợp lệ.")
-            except KeyboardInterrupt:
-                sys.exit(1)
+def get_server_port():
+    """
+    Nhập cổng server từ người dùng.
+    """
+    while True:
+        try:
+            port = int(input("Nhập cổng server: "))
+            if 1024 <= port <= 65535:
+                return port
+            else:
+                print("Cổng phải nằm trong khoảng từ 1024 đến 65535.")
+        except ValueError:
+            print("Cổng không hợp lệ.")
+        except KeyboardInterrupt:
+            sys.exit(1)
+
+class Client:
+    def __init__(self):
+        self.server_addr = None
+        self.available_files = {}
+        self.downloaded_files = set()
+        self.is_running = True
+        self.progress = {}
+        self.client_socket = None
+        self.print_lock = threading.Lock()
+        signal.signal(signal.SIGINT, self.handle_shutdown)
 
     def handle_shutdown(self, signum, frame):
         logging.error("[handle_shutdown] Shutdown client.")
@@ -115,7 +113,7 @@ class Client:
         try:
             if not self.client_socket:
                 self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                
+                self.server_addr = (SERVER_HOST, SERVER_PORT)
                 message = "GET_FILE_LIST"
                 message_len = struct.pack("!I", len(message))
                 self.client_socket.sendto(message_len, self.server_addr)
@@ -140,8 +138,8 @@ class Client:
                 self.client_socket.close()
                 self.client_socket = None
 
-            SERVER_HOST = self.get_server_ip()
-            SERVER_PORT = self.get_server_port()
+            SERVER_HOST = get_server_ip()
+            SERVER_PORT = get_server_port()
             return False
 
     def monitor_input(self):
@@ -402,5 +400,7 @@ class Client:
         print("\33[JShut down...")
 
 if __name__ == "__main__":
+    SERVER_HOST = get_server_ip()
+    SERVER_PORT = get_server_port()
     client = Client()
     client.start_client()

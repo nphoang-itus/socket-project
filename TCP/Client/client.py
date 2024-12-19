@@ -397,8 +397,7 @@ class Client:
                         message = self.client_socket.recv(15).decode(CHAR_ENCODING)
                         if "SERVER_SHUTDOWN" in message:
                             print("\33[JServer has shut down. Disconnecting...")
-                            self.is_connected = False
-                            self.client_socket.close()
+                            self.handle_breaking(signal.SIGINT, None)
                             break
                     except socket.timeout:
                         pass

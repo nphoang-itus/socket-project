@@ -90,16 +90,18 @@ class Server:
             self.is_running = False
 
             # Đóng tất cả kết nối đến client
-            for client in self.clients:
+            for client in self.clients.copy():
                 try:
-                    message = (f"SERVER_SHUTDOWN").encode(CHAR_ENCODING)
-                    client.sendall(message)
-                    time.sleep(5)
-                except Exception as e:
-                    logging.error(f"Error: {e}")
-                finally:
-                    logging.info(f"Closing connection to {client.getpeername()}")
+                    # Kiểm tra socket còn mở trước khi gửi thông báo
+                    if client.fileno() != -1:  
+                        logging.info(f"Closing connection to {client.getpeername()}")
+                        message = (f"SERVER_SHUTDOWN").encode(CHAR_ENCODING)
+                        client.sendall(message)
+                        time.sleep(3)
                     client.close()
+                except Exception as e:
+                    logging.error(f"Error while closing client socket: {e}")
+
                 
             for thread in self.client_threads:
                 try:
@@ -112,12 +114,14 @@ class Server:
             self.client_threads.clear()
 
             # Đóng server socket
-            if self.server_socket:
+            if self.server_socket and self.server_socket.fileno() != -1:
                 try:
                     self.server_socket.close()
                     logging.info("Server socket successfully closed")
                 except Exception as e:
                     logging.error(f"Error: {e}")
+                finally:
+                    self.server_socket = None
 
             for handler in logging.getLogger().handlers:
                 handler.flush()
@@ -184,9 +188,16 @@ class Server:
             logging.error(f"Error: {e}")
 
         finally:
-            self.clients.remove(client_connect)
-            client_connect.close()
+            if client_connect in self.clients:
+                self.clients.remove(client_connect)
+            try:
+                if client_connect.fileno() != -1:
+                    client_connect.close()
+            except Exception as e:
+                logging.error(f"Error while closing client connection: {e}")
             logging.info(f"Connection from {client_address} closed")
+
+
 
     def start(self):
         try:

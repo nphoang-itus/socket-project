@@ -1,11 +1,11 @@
 .DS_Store
 *.log
-*.txt
+# *.txt
 
 SOURCE/TCP/Client/bin
-SOURCE/TCP/Client/downloads
+# SOURCE/TCP/Client/downloads
 SOURCE/TCP/Server/logs
-SOURCE/TCP/Server/server_files
+# SOURCE/TCP/Server/server_files
 
-SOURCE/UDP/Client/downloads
-SOURCE/UDP/Server/server_files
+# SOURCE/UDP/Client/downloads
+# SOURCE/UDP/Server/server_files

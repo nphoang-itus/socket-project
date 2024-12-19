@@ -198,6 +198,7 @@ class Server:
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.server_socket.bind((SERVER_HOST, SERVER_PORT))
             local_ip = socket.gethostbyname(socket.gethostname())
+
             logging.info(f"[start_server] Server initialized on {SERVER_HOST}:{SERVER_PORT}")
             print(f"Server initialized on {SERVER_HOST}:{SERVER_PORT}")
             print(f"Local IP address: {local_ip}")
@@ -205,6 +206,7 @@ class Server:
             len_data, addr = self.server_socket.recvfrom(4)
             len_data = struct.unpack("!I", len_data)[0]
             data, addr = self.server_socket.recvfrom(len_data)
+            self.server_socket.settimeout(1)
 
             message = data.decode(CHARACTER_ENCODING)
             logging.info(f"Received GET_FILE_LIST from {addr}: {message}")
